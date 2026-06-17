@@ -591,6 +591,10 @@
 #define D_BLE_DEVICES         "Erkannte Geräte"
 #define D_BLE_REMARK          "Mit (*) markierte Geräte werden nicht gespeichert."
 
+// xdrv_82_esp32_ethernet.ino
+#define D_CONFIGURE_ETHERNET "Ethernet"
+#define D_ETHERNET_PARAMETERS "Ethernet Parameter"
+
 // xsns_05_ds18b20.ino
 #define D_SENSOR_BUSY "Sensor beschäftigt"
 #define D_SENSOR_CRC_ERROR "Sensor CRC-Fehler"

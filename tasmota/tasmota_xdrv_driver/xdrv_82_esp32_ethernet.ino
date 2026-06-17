@@ -458,6 +458,89 @@ void CmndEthSetIpConfig(void) {
   Response_P(PSTR("{\"%s%s\":\"%_I%s\"}"), XdrvMailbox.command, cmnd_idx, Settings->eth_ipv4_address[param_id], network_address);
 }
 
+
+/*********************************************************************************************\
+ * Web configuration
+\*********************************************************************************************/
+
+#ifdef USE_WEBSERVER
+
+#define WEB_HANDLE_ETH "et"
+
+const char HTTP_SCRIPT_ETH[] PROGMEM =
+  "<script>"
+  "function ce(f){"
+    "eb('etd').style.display=f?'none':'block';"
+  "}"
+  "</script>";
+
+const char HTTP_FORM_ETH[] PROGMEM =
+  "<p><label><b>DHCP</b>&nbsp;<input id='ed' type='checkbox' onclick='ce(this.checked)'%s></label></p>"
+  "<div id='etd' style='display:%s'>"
+  "<p><b>IP Address</b><br><input id='ei' placeholder='0.0.0.0' value='%s'></p>"
+  "<p><b>Gateway</b><br><input id='eg' placeholder='192.168.1.1' value='%s'></p>"
+  "<p><b>Subnet Mask</b><br><input id='en' placeholder='255.255.255.0' value='%s'></p>"
+  "<p><b>DNS Server 1</b><br><input id='e1' placeholder='8.8.8.8' value='%s'></p>"
+  "<p><b>DNS Server 2</b><br><input id='e2' placeholder='8.8.4.4' value='%s'></p>"
+  "</div>";
+
+void EthernetSaveSettings(void) {
+  char tmp[22];
+
+  WebGetArg(PSTR("ed"), tmp, sizeof(tmp));
+  bool dhcp = (strlen(tmp) > 0);
+
+  String cmnd = F(D_CMND_BACKLOG "0 ");
+  if (dhcp) {
+    cmnd += F(";EthIPAddress 0.0.0.0");
+  } else {
+    cmnd += AddWebCommand(PSTR("EthIPAddress"),  PSTR("ei"), PSTR("0.0.0.0"));
+    cmnd += AddWebCommand(PSTR("EthGateway"),    PSTR("eg"), PSTR("0.0.0.0"));
+    cmnd += AddWebCommand(PSTR("EthSubnetmask"), PSTR("en"), PSTR("255.255.255.0"));
+    cmnd += AddWebCommand(PSTR("EthDNSServer1"), PSTR("e1"), PSTR("0.0.0.0"));
+    cmnd += AddWebCommand(PSTR("EthDNSServer2"), PSTR("e2"), PSTR("0.0.0.0"));
+  }
+  ExecuteWebCommand((char*)cmnd.c_str());
+}
+
+void HandleEthernetConfiguration(void) {
+  if (!HttpCheckPriviledgedAccess()) { return; }
+
+  AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP D_CONFIGURE_ETHERNET));
+
+  if (Webserver->hasArg(F("save"))) {
+    EthernetSaveSettings();
+    WebRestart(1);
+    return;
+  }
+
+  bool is_dhcp = (Settings->eth_ipv4_address[0] == 0);
+
+  char ip_str[22], gw_str[22], sn_str[22], dns1_str[22], dns2_str[22];
+  ext_snprintf_P(ip_str,   sizeof(ip_str),   PSTR("%_I"), Settings->eth_ipv4_address[0]);
+  ext_snprintf_P(gw_str,   sizeof(gw_str),   PSTR("%_I"), Settings->eth_ipv4_address[1]);
+  ext_snprintf_P(sn_str,   sizeof(sn_str),   PSTR("%_I"), Settings->eth_ipv4_address[2]);
+  ext_snprintf_P(dns1_str, sizeof(dns1_str), PSTR("%_I"), Settings->eth_ipv4_address[3]);
+  ext_snprintf_P(dns2_str, sizeof(dns2_str), PSTR("%_I"), Settings->eth_ipv4_address[4]);
+
+  WSContentStart_P(PSTR(D_CONFIGURE_ETHERNET));
+  WSContentSendStyle();
+  WSContentSend_P(HTTP_SCRIPT_ETH);
+  WSContentSend_P(HTTP_FIELDSET_LEGEND, PSTR(D_ETHERNET_PARAMETERS));
+  WSContentSend_P(HTTP_FORM_GET_ACTION, PSTR(WEB_HANDLE_ETH));
+  WSContentSend_P(HTTP_FORM_ETH,
+    is_dhcp ? PSTR(" checked") : PSTR(""),
+    is_dhcp ? PSTR("none") : PSTR("block"),
+    ip_str, gw_str, sn_str, dns1_str, dns2_str);
+  WSContentSend_P(HTTP_FORM_END);
+  WSContentSpaceButton(BUTTON_CONFIGURATION);
+  WSContentStop();
+}
+
+#endif  // USE_WEBSERVER
+
+
+
 /*********************************************************************************************\
  * Interface
 \*********************************************************************************************/
@@ -475,6 +558,14 @@ bool Xdrv82(uint32_t function) {
     case FUNC_INIT:
       EthernetInit();
       break;
+#ifdef USE_WEBSERVER
+    case FUNC_WEB_ADD_BUTTON:
+      WSContentSend_P(HTTP_FORM_BUTTON, PSTR(WEB_HANDLE_ETH), PSTR(D_CONFIGURE_ETHERNET));
+      break;
+    case FUNC_WEB_ADD_HANDLER:
+      WebServer_on(PSTR("/" WEB_HANDLE_ETH), HandleEthernetConfiguration);
+      break;
+#endif  // USE_WEBSERVER
     case FUNC_ACTIVE:
       result = true;
       break;

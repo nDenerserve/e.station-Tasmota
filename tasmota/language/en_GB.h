@@ -591,6 +591,10 @@
 #define D_BLE_DEVICES "Devices Seen"
 #define D_BLE_REMARK "items marked (*) are not stored in config"
 
+// xdrv_82_esp32_ethernet.ino
+#define D_CONFIGURE_ETHERNET "Ethernet"
+#define D_ETHERNET_PARAMETERS "Ethernet parameters"
+
 // xsns_05_ds18b20.ino
 #define D_SENSOR_BUSY "Sensor busy"
 #define D_SENSOR_CRC_ERROR "Sensor CRC error"
