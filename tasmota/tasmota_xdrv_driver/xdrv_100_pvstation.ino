@@ -18,20 +18,16 @@
       JSON-Datei im UFS gespeichert (Schlüssel: XDRV_100_KEY).
 
 
-Zusammenfassung der LED-Logik:
-
-Zustand	                    Blau (IO38)	Gelb (IO39)	Rot (IO40)
-Boot / kein Netzwerk	        —	          —	           ✓
-WLAN-IP, kein Internet	      ✓	          —	          ✓
-Ethernet-IP, kein Internet	  —	          ✓	          ✓
-WLAN + Internet	              ✓	          —	          —
-Ethernet + Internet	          ✓	          ✓	          —
-Impuls-Flash (100 ms)	        —	          —	           —
-Internet-Erkennung erfolgt über RtcTime.valid — sobald NTP erfolgreich synchronisiert hat, ist Internet erreichbar. Das ist nicht-blockierend und ohne separaten Ping-Task.
+  Zustand	LED-Farbe
+  Boot / kein Netzwerk	Rot
+  Ethernet-IP, kein Internet	Orange
+  Ethernet + Internet	Grün
+  Impuls an S0-Eingang	kurz aus (100 ms)
 
 
 
 */
+
 
 
 
@@ -126,7 +122,7 @@ enum PVStationLedState : uint8_t {
   PVLED_PURPLE,  // WLAN-IP, kein Internet           → Blau + Rot = Lila
   PVLED_ORANGE,  // Ethernet-IP, kein Internet       → Gelb + Rot = Orange
   PVLED_BLUE,    // WLAN + Internet                  → Blau
-  PVLED_GREEN,   // Ethernet + Internet              → Blau + Gelb ≈ Grün
+  PVLED_GREEN,   // Ethernet + Internet              → Gelb (Blau+Gelb = Weiß, daher nur Gelb)
   PVLED_OFF      // Ausblitz bei Impuls              → Alle aus
 };
 
@@ -146,12 +142,13 @@ void PVStationLED_set(uint8_t state) {
     case PVLED_PURPLE: b = true; r = true; break;
     case PVLED_ORANGE: y = true; r = true; break;
     case PVLED_BLUE:   b = true;          break;
-    case PVLED_GREEN:  b = true; y = true; break;
+    case PVLED_GREEN:  y = true;           break;  // nur Gelb: Blau+Gelb wäre Weiß
     case PVLED_OFF:                       break;
   }
-  digitalWrite(PVSTATION_LED_PIN_BLUE,   b ? HIGH : LOW);
-  digitalWrite(PVSTATION_LED_PIN_YELLOW, y ? HIGH : LOW);
-  digitalWrite(PVSTATION_LED_PIN_RED,    r ? HIGH : LOW);
+  // LED ist common-anode: LOW = AN, HIGH = AUS → Logik invertiert
+  digitalWrite(PVSTATION_LED_PIN_BLUE,   b ? LOW : HIGH);
+  digitalWrite(PVSTATION_LED_PIN_YELLOW, y ? LOW : HIGH);
+  digitalWrite(PVSTATION_LED_PIN_RED,    r ? LOW : HIGH);
 }
 
 // Bestimmt den aktuellen Netzwerkzustand und aktualisiert die LED-Farbe.
@@ -171,14 +168,17 @@ void PVStationLED_update(void) {
   // Innerhalb des Flash-Zeitfensters nichts tun
   if (now < pvstationLedFlashEnd) { return; }
 
-  // Netzwerkzustand bestimmen
+  // Netzwerkzustand bestimmen (USE_ETHERNET ist in user_config_override.h aktiviert)
   bool hasInternet = RtcTime.valid;
   bool hasWifi     = WifiHasIPv4();
-#ifdef USE_ETHERNET
-  bool hasEth = EthernetHasIPv4();
-#else
-  bool hasEth = false;
-#endif
+  bool hasEth      = EthernetHasIPv4();
+
+  // Diagnoselog bei jedem Zustandswechsel
+  static bool lastWifi = false, lastEth = false, lastInternet = false;
+  if (hasWifi != lastWifi || hasEth != lastEth || hasInternet != lastInternet) {
+    lastWifi = hasWifi; lastEth = hasEth; lastInternet = hasInternet;
+    AddLog(LOG_LEVEL_INFO, PSTR("PV-LED: wifi=%d eth=%d internet=%d"), hasWifi, hasEth, hasInternet);
+  }
 
   PVStationLedState target;
   if      (hasEth  && hasInternet) target = PVLED_GREEN;
@@ -439,6 +439,11 @@ void PVStationInit()
   timerAlarm(pvstation_timer, 10000, true, 0);
 
   // RGB-LED initialisieren und sofort auf Rot setzen (Startzustand: kein Netzwerk)
+  // Pins sofort auf HIGH setzen (= alle LEDs aus bei common-anode), dann erst Output-Mode.
+  // Ohne das würde der kurze LOW-Zustand nach pinMode() alle LEDs kurz aufleuchten lassen.
+  digitalWrite(PVSTATION_LED_PIN_BLUE,   HIGH);
+  digitalWrite(PVSTATION_LED_PIN_YELLOW, HIGH);
+  digitalWrite(PVSTATION_LED_PIN_RED,    HIGH);
   pinMode(PVSTATION_LED_PIN_BLUE,   OUTPUT);
   pinMode(PVSTATION_LED_PIN_YELLOW, OUTPUT);
   pinMode(PVSTATION_LED_PIN_RED,    OUTPUT);
