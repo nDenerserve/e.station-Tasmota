@@ -16,7 +16,24 @@
   Konfiguration:
     - Impulse/kWh je Kanal werden über das Webinterface eingestellt und in einer
       JSON-Datei im UFS gespeichert (Schlüssel: XDRV_100_KEY).
+
+
+Zusammenfassung der LED-Logik:
+
+Zustand	                    Blau (IO38)	Gelb (IO39)	Rot (IO40)
+Boot / kein Netzwerk	        —	          —	           ✓
+WLAN-IP, kein Internet	      ✓	          —	          ✓
+Ethernet-IP, kein Internet	  —	          ✓	          ✓
+WLAN + Internet	              ✓	          —	          —
+Ethernet + Internet	          ✓	          ✓	          —
+Impuls-Flash (100 ms)	        —	          —	           —
+Internet-Erkennung erfolgt über RtcTime.valid — sobald NTP erfolgreich synchronisiert hat, ist Internet erreichbar. Das ist nicht-blockierend und ohne separaten Ping-Task.
+
+
+
 */
+
+
 
 
 #ifdef USE_PVSTATION
@@ -91,6 +108,92 @@ volatile uint32_t pvstationLastISRTime[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
 // GPIO-Pin je Kanal; wird im ISR zur Pegelvalidierung genutzt (Rauschimpulse auf fallender Flanke abfangen)
 const uint8_t pvstationInputPin[12] = {4, 5, 2, 1, 6, 7, 15, 16, 14, 21, 47, 48};
 
+
+/*********************************************************************************************\
+ * RGB-LED (Pin 31=IO38 Blau, Pin 32=IO39 Gelb, Pin 33=IO40 Rot)
+\*********************************************************************************************/
+
+#define PVSTATION_LED_PIN_BLUE   38   // IO38
+#define PVSTATION_LED_PIN_YELLOW 39   // IO39
+#define PVSTATION_LED_PIN_RED    40   // IO40
+
+// Dauer des LED-Ausblitzes bei einem registrierten Impuls in ms
+#define PVSTATION_LED_FLASH_MS   100
+
+// Netzwerkzustände, die über die LED-Farbe signalisiert werden
+enum PVStationLedState : uint8_t {
+  PVLED_RED,     // Startphase / kein Netzwerk      → Rot
+  PVLED_PURPLE,  // WLAN-IP, kein Internet           → Blau + Rot = Lila
+  PVLED_ORANGE,  // Ethernet-IP, kein Internet       → Gelb + Rot = Orange
+  PVLED_BLUE,    // WLAN + Internet                  → Blau
+  PVLED_GREEN,   // Ethernet + Internet              → Blau + Gelb ≈ Grün
+  PVLED_OFF      // Ausblitz bei Impuls              → Alle aus
+};
+
+PVStationLedState pvstationLedState = PVLED_RED;  // aktuell dargestellter LED-Zustand
+volatile bool pvstationLedFlash = false;           // vom ISR gesetzt wenn Impuls zählt; nicht ISR-sicher aber unkritisch
+uint32_t pvstationLedFlashEnd = 0;                 // millis()-Zeitpunkt, bis zu dem die LED ausgeblendet bleibt
+
+
+// Schaltet die RGB-LED auf den gewünschten Zustand.
+// Blau + Gelb ergibt in additiver Lichtmischung eine grünlich-weiße Farbe (bestmögliche Annäherung an Grün).
+// uint8_t statt PVStationLedState als Parameter, damit Tasmotás Auto-Prototyp-Generator
+// keinen Prototyp mit unbekanntem Enum-Typ vor dem #ifdef-Block erzeugt.
+void PVStationLED_set(uint8_t state) {
+  bool b = false, y = false, r = false;
+  switch (state) {
+    case PVLED_RED:    r = true;          break;
+    case PVLED_PURPLE: b = true; r = true; break;
+    case PVLED_ORANGE: y = true; r = true; break;
+    case PVLED_BLUE:   b = true;          break;
+    case PVLED_GREEN:  b = true; y = true; break;
+    case PVLED_OFF:                       break;
+  }
+  digitalWrite(PVSTATION_LED_PIN_BLUE,   b ? HIGH : LOW);
+  digitalWrite(PVSTATION_LED_PIN_YELLOW, y ? HIGH : LOW);
+  digitalWrite(PVSTATION_LED_PIN_RED,    r ? HIGH : LOW);
+}
+
+// Bestimmt den aktuellen Netzwerkzustand und aktualisiert die LED-Farbe.
+// RtcTime.valid dient als nicht-blockierender Internet-Indikator:
+// Eine erfolgreiche NTP-Synchronisation setzt voraus, dass der NTP-Server erreichbar ist.
+void PVStationLED_update(void) {
+  uint32_t now = millis();
+
+  // Neuen Impuls-Flash starten: LED kurz ausschalten
+  if (pvstationLedFlash) {
+    pvstationLedFlash = false;
+    pvstationLedFlashEnd = now + PVSTATION_LED_FLASH_MS;
+    PVStationLED_set(PVLED_OFF);
+    return;
+  }
+
+  // Innerhalb des Flash-Zeitfensters nichts tun
+  if (now < pvstationLedFlashEnd) { return; }
+
+  // Netzwerkzustand bestimmen
+  bool hasInternet = RtcTime.valid;
+  bool hasWifi     = WifiHasIPv4();
+#ifdef USE_ETHERNET
+  bool hasEth = EthernetHasIPv4();
+#else
+  bool hasEth = false;
+#endif
+
+  PVStationLedState target;
+  if      (hasEth  && hasInternet) target = PVLED_GREEN;
+  else if (hasWifi && hasInternet) target = PVLED_BLUE;
+  else if (hasEth)                 target = PVLED_ORANGE;
+  else if (hasWifi)                target = PVLED_PURPLE;
+  else                             target = PVLED_RED;
+
+  // LED nur neu setzen wenn sich Zustand geändert hat oder gerade Flash beendet wurde
+  if (target != pvstationLedState || pvstationLedFlashEnd > 0) {
+    pvstationLedState  = target;
+    pvstationLedFlashEnd = 0;
+    PVStationLED_set(target);
+  }
+}
 
 
 // Lädt die Imp/kWh-Konfiguration aller 12 Kanäle aus der UFS-JSON-Datei.
@@ -204,8 +307,8 @@ bool PVStationSaveSettings(void) {
 
 
 
-// Forward declaration needed to preserve IRAM_ATTR before auto-prototype generation
-void IRAM_ATTR PVStationTimer_intr();
+// Forward declaration: IRAM_ATTR nur an der Definition, nicht hier – sonst Sections-Konflikt
+void PVStationTimer_intr();
 
 // Gemeinsame ISR-Hilfsfunktion mit Software-Entprellung.
 // Wird aus den kanalspezifischen ISRs aufgerufen; muss im IRAM liegen (ARDUINO_ISR_ATTR).
@@ -221,6 +324,7 @@ static void ARDUINO_ISR_ATTR pvstationHandleISR(uint8_t idx) {
     pvstationLastISRTime[idx] = now;
     pvstationInputStatus[idx] = true;
     pvstationInputCount[idx]++;
+    pvstationLedFlash = true;  // LED-Ausblitz im nächsten Processing-Zyklus auslösen
   }
 }
 
@@ -334,6 +438,12 @@ void PVStationInit()
   timerAttachInterrupt(pvstation_timer, &PVStationTimer_intr);
   timerAlarm(pvstation_timer, 10000, true, 0);
 
+  // RGB-LED initialisieren und sofort auf Rot setzen (Startzustand: kein Netzwerk)
+  pinMode(PVSTATION_LED_PIN_BLUE,   OUTPUT);
+  pinMode(PVSTATION_LED_PIN_YELLOW, OUTPUT);
+  pinMode(PVSTATION_LED_PIN_RED,    OUTPUT);
+  PVStationLED_set(PVLED_RED);
+
   // Initialisierung erfolgreich – Verarbeitung im Hauptloop freigeben
   initSuccess = true;
 
@@ -341,10 +451,13 @@ void PVStationInit()
 
 
 
-// Hauptverarbeitungsroutine; wird alle 100 ms von FUNC_EVERY_100_MSECOND aufgerufen.
+// Hauptverarbeitungsroutine; wird alle 50 ms von FUNC_EVERY_50_MSECOND aufgerufen.
 // Gibt ausgelöste Eingänge im Debug-Log aus und sendet bei gesetztem Flag den MQTT-Payload.
 void PVStationProcessing(void)
 {
+  // LED-Zustand aktualisieren (Netzwerkstatus, Impuls-Flash)
+  PVStationLED_update();
+
   // Pulse-Debug-Logging: jeder Kanal meldet sich einmalig nach dem ersten Impuls
     if (debugTimerFired) {
         AddLog(LOG_LEVEL_DEBUG, PSTR("  --> Counter 1: %d impulses"), pvstationInputCount[0]);
