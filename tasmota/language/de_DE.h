@@ -1354,4 +1354,10 @@
 #define D_MODBUSRELAY_RX_ENA     "MbsRelay RX Ena"
 
 
+// e.station driver (xdrv_100_estation)
+#define D_ESTATION_PARAMETERS       "e.station Einstellungen"
+#define D_ESTATION_IMPULSES         "Impulse"
+#define D_ESTATION_LAST_SENT        "Letzter MQTT-Versand"
+#define D_ESTATION_NOT_YET_SENT     "noch nicht gesendet"
+
 #endif  // _LANGUAGE_DE_DE_H_

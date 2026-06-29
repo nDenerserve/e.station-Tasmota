@@ -44,10 +44,11 @@
 // Schlüssel für die persistente JSON-Einstellungsdatei im UFS
 #define XDRV_100_KEY                      "estationdrv100"
 
-// Anzeigestrings für das Webinterface (Deutsch)
+// Anzeigestring (Produktname, nicht übersetzt)
 #define D_CONFIGURE_ESTATION "e.station"
-#define D_ESTATION_PARAMETERS "e.station Parameters"
-#define D_ESTATION_COUNTER "Zähler"
+// D_ESTATION_PARAMETERS, D_ESTATION_IMPULSES, D_ESTATION_LAST_SENT, D_ESTATION_NOT_YET_SENT
+// werden aus der jeweiligen Sprachdatei (language/xx_XX.h) bezogen.
+// D_COUNTER wird ebenfalls aus der Sprachdatei bezogen ("Counter" / "Zähler").
 #define D_ESTATION_IMPKWH "Imp/kWh"
 
 // Präfix der JSON-Felder für die Imp/kWh-Konfiguration je Kanal (z. B. "s0counter1")
@@ -243,7 +244,7 @@ const char HTTP_FORM_ESTATION1[] PROGMEM =
   "<table>";
 // Eine Tabellenzeile pro Kanal: Kanalbezeichnung, Eingabefeld für Imp/kWh-Wert
 const char HTTP_FORM_ESTATION_COUNTER[] PROGMEM =
-  "<tr><td style='width:260px'><b>" D_ESTATION_COUNTER " %d</b></td><td style='width:70px'><input id='c%d' placeholder='1000' value='%d'></td><td> " D_ESTATION_IMPKWH "</td></tr>";
+  "<tr><td style='width:260px'><b>" D_COUNTER " %d</b></td><td style='width:70px'><input id='c%d' placeholder='1000' value='%d'></td><td> " D_ESTATION_IMPKWH "</td></tr>";
 
 // URL-Pfad der Statusseite im eingebetteten Webserver
 #define WEB_HANDLE_ESTATION_INFO "esi"
@@ -254,19 +255,19 @@ const char HTTP_BTN_MENU_ESTATION_INFO[] PROGMEM =
 
 // Kopf der Statustabelle: Zeitstempel + Spaltenüberschriften
 const char HTTP_ESTATION_INFO_HEADER[] PROGMEM =
-  "<fieldset><legend><b>&nbsp;e.station Status&nbsp;</b></legend>"
-  "<p>Letzter MQTT-Versand: <b>%s</b></p>"
+  "<fieldset><legend><b>&nbsp;" D_CONFIGURE_ESTATION " " D_STATUS "&nbsp;</b></legend>"
+  "<p>" D_ESTATION_LAST_SENT ": <b>%s</b></p>"
   "<table>"
-  "<tr><th style='width:200px;text-align:left'>Z&auml;hler</th>"
-  "<th style='width:90px;text-align:right'>Impulse</th>"
+  "<tr><th style='width:200px;text-align:left'>" D_COUNTER "</th>"
+  "<th style='width:90px;text-align:right'>" D_ESTATION_IMPULSES "</th>"
   "<th style='width:120px;text-align:right'>kWh</th>"
-  "<th style='width:100px;text-align:right'>Imp/kWh</th></tr>";
+  "<th style='width:100px;text-align:right'>" D_ESTATION_IMPKWH "</th></tr>";
 
 // Eine Tabellenzeile pro Kanal in der Statusansicht
 const char HTTP_ESTATION_INFO_ROW[] PROGMEM =
-  "<tr><td><b>Z&auml;hler %d</b></td>"
+  "<tr><td><b>" D_COUNTER " %d</b></td>"
   "<td style='text-align:right'>%d</td>"
-  "<td style='text-align:right'>%.3f</td>"
+  "<td style='text-align:right'>%s</td>"
   "<td style='text-align:right'>%d</td></tr>";
 
 
@@ -302,8 +303,8 @@ void HandleEStationConfiguration(void)
   WSContentStop();
 }
 
-// HTTP-Handler für GET /pvsi: zeigt die Statusseite mit aktuellen Zählerständen an.
-// Lädt sich alle 5 Sekunden automatisch neu (meta-refresh).
+// HTTP-Handler für GET /esi: zeigt die Statusseite mit aktuellen Zählerständen an.
+// Lädt sich alle 5 Sekunden automatisch neu (JS-setTimeout).
 void HandleEStationInfo(void)
 {
   if (!HttpCheckPriviledgedAccess()) { return; }
@@ -311,16 +312,19 @@ void HandleEStationInfo(void)
   AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_HTTP "e.station Status"));
 
   WSContentStart_P(PSTR("e.station Status"));
-  WSContentSend_P(PSTR("<meta http-equiv='refresh' content='5'>"));
   WSContentSendStyle();
+  // HTTP_HEADER1 lässt <script> offen – Refresh erst nach </script> (= nach WSContentSendStyle) einfügen
+  WSContentSend_P(PSTR("<script>setTimeout(()=>location.reload(),5000);</script>"));
 
-  const char *lastSend = (estationLastSendTime[0] != '\0') ? estationLastSendTime : "noch nicht gesendet";
+  const char *lastSend = (estationLastSendTime[0] != '\0') ? estationLastSendTime : PSTR(D_ESTATION_NOT_YET_SENT);
   WSContentSend_P(HTTP_ESTATION_INFO_HEADER, lastSend);
 
   for (uint32_t i = 0; i < 12; i++) {
     uint32_t count = estationInputCount[i];
     float kwh = (s0counter_idx[i] > 0) ? (float)count / (float)s0counter_idx[i] : 0.0f;
-    WSContentSend_P(HTTP_ESTATION_INFO_ROW, i + 1, count, kwh, s0counter_idx[i]);
+    char kwhStr[12];
+    dtostrf(kwh, 1, 3, kwhStr);
+    WSContentSend_P(HTTP_ESTATION_INFO_ROW, i + 1, count, kwhStr, s0counter_idx[i]);
   }
 
   WSContentSend_P(PSTR("</table></fieldset>"));
@@ -336,20 +340,20 @@ bool EStationSaveSettings(void) {
   String tmpString = "";
   char stringBuffer[22];
 
-  String pvStationSaveString = PSTR("{\"" XDRV_100_KEY "\":{");
+  String eStationSaveString = PSTR("{\"" XDRV_100_KEY "\":{");
 
 
   for (uint32_t i = 0; i < 12; i++) {
     s0counter_idx[i] = Webserver->arg(String("c") + String(i)).toInt();
-    pvStationSaveString += String(PSTR("\"" D_ESTATION_JSON_S0 )) + String(i+1) + String(PSTR("\":\"")) + String(s0counter_idx[i]) + String(PSTR("\""));
+    eStationSaveString += String(PSTR("\"" D_ESTATION_JSON_S0 )) + String(i+1) + String(PSTR("\":\"")) + String(s0counter_idx[i]) + String(PSTR("\""));
     if (i < 11) {
-      pvStationSaveString += String(PSTR(","));
+      eStationSaveString += String(PSTR(","));
     }
   }
 
-  pvStationSaveString += PSTR("}}");
+  eStationSaveString += PSTR("}}");
 
-  Response_P(PSTR(pvStationSaveString.c_str()));
+  Response_P(PSTR(eStationSaveString.c_str()));
   result &= UfsJsonSettingsWrite(ResponseData());
 
   return result;
