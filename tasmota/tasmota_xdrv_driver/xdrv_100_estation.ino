@@ -46,6 +46,8 @@
 
 // Anzeigestring (Produktname, nicht übersetzt)
 #define D_CONFIGURE_ESTATION "e.station"
+// Versionsnummer der e.station-Funktionalität; wird auf der Infoseite angezeigt
+#define D_ESTATION_VERSION "1.0.0"
 // D_ESTATION_PARAMETERS, D_ESTATION_IMPULSES, D_ESTATION_LAST_SENT, D_ESTATION_NOT_YET_SENT
 // werden aus der jeweiligen Sprachdatei (language/xx_XX.h) bezogen.
 // D_COUNTER wird ebenfalls aus der Sprachdatei bezogen ("Counter" / "Zähler").
@@ -256,6 +258,7 @@ const char HTTP_BTN_MENU_ESTATION_INFO[] PROGMEM =
 // Kopf der Statustabelle: Zeitstempel + Spaltenüberschriften
 const char HTTP_ESTATION_INFO_HEADER[] PROGMEM =
   "<fieldset><legend><b>&nbsp;" D_CONFIGURE_ESTATION " " D_STATUS "&nbsp;</b></legend>"
+  "<p>" D_VERSION ": <b>" D_ESTATION_VERSION "</b></p>"
   "<p>" D_ESTATION_LAST_SENT ": <b>%s</b></p>"
   "<table>"
   "<tr><th style='width:200px;text-align:left'>" D_COUNTER "</th>"
@@ -328,6 +331,7 @@ void HandleEStationInfo(void)
   }
 
   WSContentSend_P(PSTR("</table></fieldset>"));
+  WSContentSpaceButton(BUTTON_MAIN);
   WSContentSpaceButton(BUTTON_CONFIGURATION);
   WSContentStop();
 }
